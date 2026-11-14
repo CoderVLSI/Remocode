@@ -1,11 +1,14 @@
 {
   "expo": {
-    "name": "Remocode",
+    "name": "Remo Code",
     "slug": "remocode",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["remocode", "app.remocode.mobile"],
+    "scheme": [
+      "remocode",
+      "app.remocode.mobile"
+    ],
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
@@ -18,13 +21,16 @@
     "android": {
       "package": "app.remocode.mobile",
       "adaptiveIcon": {
-        "backgroundColor": "#0B0B0F",
+        "backgroundColor": "#04071F",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"]
+      "permissions": [
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -35,9 +41,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0B0B0F",
+          "backgroundColor": "#04071F",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 120
+          "imageWidth": 200
         }
       ],
       [
@@ -45,7 +51,10 @@
         {
           "microphonePermission": "Remocode uses the microphone for voice mode.",
           "speechRecognitionPermission": "Remocode uses speech recognition to turn your voice into text.",
-          "androidSpeechServicePackages": ["com.google.android.as", "com.google.android.googlequicksearchbox"]
+          "androidSpeechServicePackages": [
+            "com.google.android.as",
+            "com.google.android.googlequicksearchbox"
+          ]
         }
       ],
       "llama.rn"

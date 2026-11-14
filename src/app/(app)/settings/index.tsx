@@ -158,7 +158,7 @@ export default function SettingsScreen() {
           ])
         }
       />
-      <T variant="small" style={{ textAlign: 'center' }}>Remocode 0.1.0</T>
+      <T variant="small" style={{ textAlign: 'center' }}>Remo Code 0.1.0</T>
     </Screen>
   );
 }

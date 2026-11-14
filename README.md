@@ -1,4 +1,4 @@
-# Remocode
+# Remo Code
 
 An AI agent app for your phone, in the spirit of Google Antigravity's mobile app, with:
 
@@ -32,17 +32,16 @@ npm start                   # dev server for the dev client
 
 ### Build an APK
 
-You need JDK 17+ and the Android SDK (platform 37, build-tools 37.0.0, NDK 27.1.12297006, CMake 3.22.1).
+You need **JDK 17** (React Native's Gradle plugin requires exactly 17; newer JDKs fail) and the Android SDK (platform 37, build-tools 37.0.0, NDK 27.1.12297006, CMake 3.22.1). The first build downloads a lot and takes 10 to 15 minutes.
 
 ```bash
 npm install
-npx expo prebuild --platform android
-echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-# optional, much faster and smaller: arm64 only
-sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' android/gradle.properties
-cd android && ./gradlew assembleRelease
-# -> android/app/build/outputs/apk/release/app-release.apk
+export ANDROID_HOME=/path/to/android-sdk
+./scripts/build-android.sh          # arm64 only; ARCHS="arm64-v8a,x86_64" to include emulators
+# -> dist/remo-code-release.apk
 ```
+
+The script runs `expo prebuild`, points Gradle at your SDK and JDK 17, and builds. If a build behind a restrictive proxy fails with 403 on `repo.reactnative.dev`, allow that host: Maven Central redirects the React Native Android library there.
 
 Or in the cloud: `npx eas-cli build --platform android --profile preview` (needs an Expo account).
 

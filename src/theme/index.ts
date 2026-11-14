@@ -1,16 +1,16 @@
 export const colors = {
-  bg: '#0B0B0F',
-  surface: '#15151B',
-  surface2: '#1E1E27',
-  border: '#2A2A35',
+  bg: '#05081E',
+  surface: '#0E1330',
+  surface2: '#171D40',
+  border: '#262E5C',
   text: '#F2F2F5',
-  muted: '#8E8E9A',
+  muted: '#8E94B8',
   primary: '#4C8DFF',
   primaryText: '#FFFFFF',
   danger: '#FF6B6B',
   success: '#4ADE80',
   warning: '#FBBF24',
-  userBubble: '#1F2A44',
+  userBubble: '#1B2A5E',
   overlay: 'rgba(0,0,0,0.55)',
 } as const;
 

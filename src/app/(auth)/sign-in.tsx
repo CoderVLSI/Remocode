@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
@@ -8,7 +9,7 @@ import { getBackendHost, isBackendConfigured } from '@/lib/supabase';
 import { useAuth } from '@/store/auth';
 import { colors, space } from '@/theme';
 import { BackendSetup } from '@/ui/BackendSetup';
-import { Button, Icon, Input, Screen, T } from '@/ui/components';
+import { Button, Input, Screen, T } from '@/ui/components';
 
 type Mode = 'code' | 'password';
 
@@ -57,9 +58,9 @@ export default function SignIn() {
   return (
     <Screen style={{ paddingTop: insets.top + space.xxl, gap: space.lg }}>
       <View style={{ gap: space.sm }}>
-        <Icon name="terminal" size={36} color={colors.primary} />
-        <T variant="title">Remocode</T>
-        <T variant="small">Your AI agent, on your phone. Sign in to sync projects and devices.</T>
+        <Image source={require('../../../assets/images/icon.png')} style={{ width: 72, height: 72, borderRadius: 18 }} accessibilityLabel="Remo Code logo" />
+        <T variant="title">Remo Code</T>
+        <T variant="small">Code beyond gravity. Sign in to sync your projects and computers.</T>
       </View>
 
       {!configured || changingBackend ? (
