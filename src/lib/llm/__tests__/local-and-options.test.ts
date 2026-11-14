@@ -2,7 +2,7 @@ import { createChunkedStorage } from '../../chunkedStorage';
 import type { KeyValueBackend } from '../../chunkedStorage';
 import { customEntryFromUrl, LOCAL_CATALOG } from '../localCatalog';
 import { estimateTokens, fitToContext } from '../localContext';
-import { buildModelOptions, resolveSelection } from '../modelOptions';
+import { buildModelOptions, pickLiveModel, resolveSelection } from '../modelOptions';
 import type { ChatMessage } from '../types';
 import { makeModelId, parseModelId } from '../types';
 
@@ -162,5 +162,21 @@ describe('chunked storage', () => {
     await store.setItem('k', 'x'.repeat(30));
     backend.data.delete('k.1');
     expect(await store.getItem('k')).toBeNull();
+  });
+});
+
+describe('pickLiveModel', () => {
+  const models = [{ id: 'gemini-2.5-flash-live' }, { id: 'gemini-3.1-flash-live-preview' }, { id: 'gemini-3.0-flash-live' }];
+  it('keeps the saved choice while it still exists', () => {
+    expect(pickLiveModel(models, 'gemini-2.5-flash-live')).toBe('gemini-2.5-flash-live');
+  });
+  it('falls back to the newest version, comparing numbers properly', () => {
+    expect(pickLiveModel(models, null)).toBe('gemini-3.1-flash-live-preview');
+    expect(pickLiveModel(models, 'retired-model')).toBe('gemini-3.1-flash-live-preview');
+    expect(pickLiveModel([{ id: 'live-9' }, { id: 'live-10' }], null)).toBe('live-10');
+  });
+  it('trusts a saved choice when the list has not been fetched, and returns null with nothing known', () => {
+    expect(pickLiveModel([], 'typed-by-hand')).toBe('typed-by-hand');
+    expect(pickLiveModel([], null)).toBeNull();
   });
 });

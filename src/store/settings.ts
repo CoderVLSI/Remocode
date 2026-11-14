@@ -15,6 +15,11 @@ export interface VoiceSettings {
   language: string;
   /** Speech rate multiplier for text-to-speech. */
   rate: number;
+  /** `live`: Gemini Live (two-way audio, tools). `classic`: on-device recognition + text-to-speech. */
+  engine: 'live' | 'classic';
+  /** Chosen Gemini Live model id, or null to pick the newest available. */
+  liveModel: string | null;
+  liveVoice: string;
 }
 
 export interface ModelListEntry {
@@ -32,6 +37,8 @@ interface SettingsState {
   extraModels: Partial<Record<ProviderId, string[]>>;
   /** Models fetched from a provider's list endpoint after a key was added. */
   fetchedModels: Partial<Record<ProviderId, ModelListEntry[]>>;
+  /** Gemini models that support the Live API, fetched with the user's key. */
+  liveModels: ModelListEntry[];
   localDownloads: Record<string, { uri: string; sizeBytes: number }>;
   customLocalModels: LocalCatalogEntry[];
   voice: VoiceSettings;
@@ -44,6 +51,7 @@ interface SettingsState {
   addExtraModel(provider: ProviderId, model: string): void;
   removeExtraModel(provider: ProviderId, model: string): void;
   setFetchedModels(provider: ProviderId, models: ModelListEntry[]): void;
+  setLiveModels(models: ModelListEntry[]): void;
   setLocalDownload(id: string, info: { uri: string; sizeBytes: number } | null): void;
   addCustomLocalModel(entry: LocalCatalogEntry): void;
   removeCustomLocalModel(id: string): void;
@@ -63,9 +71,10 @@ export const useSettings = create<SettingsState>()(
       baseUrls: {},
       extraModels: {},
       fetchedModels: {},
+      liveModels: [],
       localDownloads: {},
       customLocalModels: [],
-      voice: { speak: true, onDeviceRecognition: true, language: 'en-US', rate: 1 },
+      voice: { speak: true, onDeviceRecognition: true, language: 'en-US', rate: 1, engine: 'live', liveModel: null, liveVoice: 'Puck' },
 
       selectModel: (id) => set({ selectedModelId: id }),
       setSystemPrompt: (text) => set({ systemPrompt: text }),
@@ -96,6 +105,7 @@ export const useSettings = create<SettingsState>()(
       },
       setFetchedModels: (provider, models) =>
         set({ fetchedModels: { ...get().fetchedModels, [provider]: models } }),
+      setLiveModels: (models) => set({ liveModels: models }),
 
       setLocalDownload(id, info) {
         const next = { ...get().localDownloads };
@@ -114,6 +124,17 @@ export const useSettings = create<SettingsState>()(
     {
       name: 'remocode.settings.v1',
       storage: createJSONStorage(() => AsyncStorage),
+      // Persisted state replaces nested objects wholesale. Merge `voice` and `baseUrls` field by
+      // field so settings saved by an older version still pick up newly added defaults.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<SettingsState>;
+        return {
+          ...current,
+          ...p,
+          voice: { ...current.voice, ...(p.voice ?? {}) },
+          baseUrls: { ...current.baseUrls, ...(p.baseUrls ?? {}) },
+        };
+      },
     },
   ),
 );

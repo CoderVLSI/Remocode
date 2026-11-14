@@ -7,7 +7,7 @@ import { LOCAL_CATALOG } from './localCatalog';
 import type { LocalCatalogEntry } from './localCatalog';
 import { buildModelOptions } from './modelOptions';
 import { createAnthropicProvider, listAnthropicModels } from './providers/anthropic';
-import { createGeminiProvider, listGeminiModels } from './providers/gemini';
+import { createGeminiProvider, listGeminiLiveModels, listGeminiModels } from './providers/gemini';
 import { createLocalProvider } from './providers/local';
 import {
   OPENAI_BASE_URL,
@@ -86,9 +86,16 @@ export async function refreshModels(providerId: ProviderId): Promise<number> {
   const apiKey = await readApiKey(providerId);
   let models: { id: string; label: string }[] = [];
   switch (providerId) {
-    case 'gemini':
+    case 'gemini': {
       models = await listGeminiModels({ apiKey, fetch: fetchImpl });
+      // Live models are a separate capability; a failure here must not hide the normal list.
+      try {
+        s.setLiveModels(await listGeminiLiveModels({ apiKey, fetch: fetchImpl }));
+      } catch {
+        // keep whatever was cached
+      }
       break;
+    }
     case 'anthropic':
       models = await listAnthropicModels({ apiKey, fetch: fetchImpl });
       break;

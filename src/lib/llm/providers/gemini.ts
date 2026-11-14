@@ -4,6 +4,7 @@ import { getJson, postStream, sendableHistory } from '../http';
 import type { FetchLike } from '../http';
 import { readSSE } from '../sse';
 import { errorFromException } from '../errors';
+import { toGeminiSchema } from '../../live/protocol';
 
 export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -74,7 +75,7 @@ export function createGeminiProvider(opts: {
             functionDeclarations: options.tools.map((t) => ({
               name: t.name,
               description: t.description,
-              parameters: t.parameters,
+              parameters: toGeminiSchema(t.parameters),
             })),
           },
         ];
@@ -157,5 +158,20 @@ export async function listGeminiModels(opts: {
   return (json.models ?? [])
     .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
     .filter((m) => /gemini/i.test(m.name) && !/embedding|aqa|imagen|veo|tts|image/i.test(m.name))
+    .map((m) => ({ id: m.name.replace(/^models\//, ''), label: m.displayName ?? m.name }));
+}
+
+/** Models that speak the Live API (bidirectional audio), discovered from the user's own key. */
+export async function listGeminiLiveModels(opts: {
+  apiKey: string;
+  fetch: FetchLike;
+  baseUrl?: string;
+}): Promise<{ id: string; label: string }[]> {
+  const base = (opts.baseUrl ?? GEMINI_BASE_URL).replace(/\/$/, '');
+  const json = await getJson<{
+    models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
+  }>(opts.fetch, `${base}/models?pageSize=200`, { 'x-goog-api-key': opts.apiKey });
+  return (json.models ?? [])
+    .filter((m) => m.supportedGenerationMethods?.includes('bidiGenerateContent'))
     .map((m) => ({ id: m.name.replace(/^models\//, ''), label: m.displayName ?? m.name }));
 }

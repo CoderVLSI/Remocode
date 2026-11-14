@@ -83,3 +83,16 @@ export function buildModelOptions(input: ModelOptionInputs): ModelOption[] {
 export function resolveSelection(options: ModelOption[], selectedId: string | null): ModelOption | null {
   return options.find((o) => o.id === selectedId) ?? options[0] ?? null;
 }
+
+/**
+ * Chooses the Gemini Live model: the user's saved choice if it still exists, otherwise the
+ * newest-looking Live model (version-aware sort, so 3.x beats 2.5). Null when none is known.
+ */
+export function pickLiveModel(available: { id: string }[], preferred: string | null | undefined): string | null {
+  if (preferred && (available.length === 0 || available.some((m) => m.id === preferred))) return preferred;
+  if (available.length === 0) return null;
+  const ranked = [...available].sort((a, b) =>
+    b.id.localeCompare(a.id, 'en', { numeric: true, sensitivity: 'base' }),
+  );
+  return ranked[0].id;
+}

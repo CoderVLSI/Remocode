@@ -5,7 +5,9 @@ import { Alert, Switch, View } from 'react-native';
 import { useAuth } from '@/store/auth';
 import { DEFAULT_SYSTEM_PROMPT, useSettings } from '@/store/settings';
 import { colors, space } from '@/theme';
-import { Button, Card, Input, Row, Screen, SectionTitle, T } from '@/ui/components';
+import { LIVE_VOICES } from '@/lib/live/protocol';
+import { pickLiveModel } from '@/lib/llm/modelOptions';
+import { Button, Card, Icon, Input, Row, Screen, SectionTitle, Sheet, T } from '@/ui/components';
 import { useModels } from '@/ui/ModelPicker';
 
 export default function SettingsScreen() {
@@ -17,6 +19,11 @@ export default function SettingsScreen() {
   const voice = useSettings((s) => s.voice);
   const updateVoice = useSettings((s) => s.updateVoice);
   const [prompt, setPrompt] = useState(systemPrompt);
+  const liveModels = useSettings((s) => s.liveModels);
+  const hasGeminiKey = useSettings((s) => !!s.hasKey.gemini);
+  const [modelSheet, setModelSheet] = useState(false);
+  const [voiceSheet, setVoiceSheet] = useState(false);
+  const effectiveLive = pickLiveModel(liveModels, voice.liveModel);
 
   return (
     <Screen>
@@ -39,6 +46,26 @@ export default function SettingsScreen() {
       <SectionTitle>Voice</SectionTitle>
       <Card>
         <Row
+          icon="sparkles-outline"
+          title="Voice engine"
+          subtitle={
+            voice.engine === 'live'
+              ? hasGeminiKey
+                ? 'Gemini Live: two-way talk, interrupt any time, tools'
+                : 'Gemini Live needs a Gemini key; classic voice is used until you add one'
+              : 'Classic: speech-to-text, then spoken replies'
+          }
+          right={<T variant="small">{voice.engine === 'live' ? 'Live' : 'Classic'}</T>}
+          onPress={() => updateVoice({ engine: voice.engine === 'live' ? 'classic' : 'live' })}
+        />
+        <Row
+          icon="hardware-chip-outline"
+          title="Live model"
+          subtitle={effectiveLive ? `${voice.liveModel ? '' : 'Auto: '}${effectiveLive}` : 'None found. Refresh models under Models → Gemini.'}
+          onPress={() => setModelSheet(true)}
+        />
+        <Row icon="person-outline" title="Live voice" subtitle={voice.liveVoice} onPress={() => setVoiceSheet(true)} />
+        <Row
           title="Read replies aloud"
           right={<Switch value={voice.speak} onValueChange={(v) => updateVoice({ speak: v })} trackColor={{ true: colors.primary }} />}
         />
@@ -55,6 +82,47 @@ export default function SettingsScreen() {
         placeholder="en-US"
         autoCapitalize="none"
       />
+
+      <Sheet visible={modelSheet} onClose={() => setModelSheet(false)} title="Gemini Live model">
+        <Row
+          title="Auto (newest available)"
+          right={voice.liveModel === null ? <Icon name="checkmark" /> : <View />}
+          onPress={() => {
+            updateVoice({ liveModel: null });
+            setModelSheet(false);
+          }}
+        />
+        {liveModels.map((m) => (
+          <Row
+            key={m.id}
+            title={m.label}
+            subtitle={m.id}
+            right={voice.liveModel === m.id ? <Icon name="checkmark" /> : <View />}
+            onPress={() => {
+              updateVoice({ liveModel: m.id });
+              setModelSheet(false);
+            }}
+          />
+        ))}
+        {liveModels.length === 0 ? (
+          <T variant="small" style={{ padding: space.lg }}>
+            No Live models yet. Add a Gemini key and refresh in Settings → Models → Gemini.
+          </T>
+        ) : null}
+      </Sheet>
+      <Sheet visible={voiceSheet} onClose={() => setVoiceSheet(false)} title="Gemini Live voice">
+        {LIVE_VOICES.map((v) => (
+          <Row
+            key={v}
+            title={v}
+            right={voice.liveVoice === v ? <Icon name="checkmark" /> : <View />}
+            onPress={() => {
+              updateVoice({ liveVoice: v });
+              setVoiceSheet(false);
+            }}
+          />
+        ))}
+      </Sheet>
 
       <SectionTitle>Behaviour</SectionTitle>
       <Input

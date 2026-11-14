@@ -2,7 +2,7 @@ import type { Session, User } from '@supabase/supabase-js';
 import { create } from 'zustand';
 
 import { normalizeEmail } from '@/lib/authValidation';
-import { isSupabaseConfigured, startAuthAppStateRefresh, supabase } from '@/lib/supabase';
+import { isBackendConfigured, loadSavedBackend, onBackendChange, startAuthAppStateRefresh, supabase } from '@/lib/supabase';
 
 export type VerifyKind = 'email' | 'signup';
 
@@ -31,19 +31,46 @@ export const useAuth = create<AuthState>((set) => ({
   ready: false,
 
   init() {
-    if (!isSupabaseConfigured) {
-      set({ ready: true });
-      return () => {};
-    }
-    startAuthAppStateRefresh();
-    supabase.auth
-      .getSession()
-      .then(({ data }) => set({ session: data.session, user: data.session?.user ?? null, ready: true }))
-      .catch(() => set({ ready: true }));
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      set({ session, user: session?.user ?? null, ready: true });
-    });
-    return () => data.subscription.unsubscribe();
+    let unsubscribeAuth: (() => void) | null = null;
+    let cancelled = false;
+    // Only the most recent attach may install a listener; earlier ones that are still awaiting bail out.
+    let generation = 0;
+
+    // (Re)attaches to whichever backend is configured right now.
+    const attach = async () => {
+      const mine = ++generation;
+      const stale = () => cancelled || mine !== generation;
+      unsubscribeAuth?.();
+      unsubscribeAuth = null;
+      await loadSavedBackend();
+      if (stale()) return;
+      if (!isBackendConfigured()) {
+        set({ session: null, user: null, ready: true });
+        return;
+      }
+      startAuthAppStateRefresh();
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (stale()) return;
+        set({ session: data.session, user: data.session?.user ?? null, ready: true });
+      } catch {
+        if (!stale()) set({ ready: true });
+      }
+      if (stale()) return;
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        set({ session, user: session?.user ?? null, ready: true });
+      });
+      unsubscribeAuth = () => data.subscription.unsubscribe();
+    };
+
+    void attach();
+    // Entering or changing the backend inside the app re-attaches without a restart.
+    const stopWatching = onBackendChange(() => void attach());
+    return () => {
+      cancelled = true;
+      stopWatching();
+      unsubscribeAuth?.();
+    };
   },
 
   async sendCode(email) {

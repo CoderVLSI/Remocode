@@ -1,6 +1,7 @@
 import type { ToolExecutor } from '../llm/agent';
 
 import type { GitHubClient } from './github';
+import { isFolder, isReadableDriveFile } from './google';
 import type { GoogleClient } from './google';
 
 function str(args: Record<string, unknown>, key: string, required = true): string {
@@ -111,6 +112,58 @@ export function googleTools(client: GoogleClient): ToolExecutor[] {
         },
       },
       execute: async (args, { signal }) => client.readSheet(str(args, 'spreadsheet_id'), str(args, 'range', false), signal),
+    },
+  ];
+}
+
+/**
+ * Tools locked to one attached Drive folder. Reads are verified to be inside the
+ * folder, so the model cannot be steered into reading the rest of the user's Drive.
+ */
+export function driveFolderTools(client: GoogleClient, folder: { folderId: string; name: string }): ToolExecutor[] {
+  return [
+    {
+      spec: {
+        name: 'drive_folder_list',
+        description: `List files and subfolders in the attached Google Drive folder "${folder.name}" (or one of its subfolders).`,
+        parameters: {
+          type: 'object',
+          properties: {
+            folder_id: { type: 'string', description: 'Subfolder id from a previous listing. Omit for the attached folder itself.' },
+          },
+        },
+      },
+      async execute(args, { signal }) {
+        const id = str(args, 'folder_id', false) || folder.folderId;
+        if (id !== folder.folderId && !(await client.isInsideFolder(id, folder.folderId, 8, signal))) {
+          throw new Error('That folder is outside the attached folder.');
+        }
+        const entries = await client.listFolder(id, signal);
+        return entries.length
+          ? entries
+              .map((e) => `${isFolder(e) ? '[folder] ' : ''}${e.name} (id: ${e.id}${isFolder(e) || isReadableDriveFile(e) ? '' : ', not readable as text'})`)
+              .join('\n')
+          : '(empty folder)';
+      },
+    },
+    {
+      spec: {
+        name: 'drive_folder_read',
+        description: `Read a text-like file (Google Doc, Sheet as CSV, Slides, or a text/code file) from inside the attached Drive folder "${folder.name}".`,
+        parameters: {
+          type: 'object',
+          properties: { file_id: { type: 'string', description: 'File id from drive_folder_list' } },
+          required: ['file_id'],
+        },
+      },
+      async execute(args, { signal }) {
+        const id = str(args, 'file_id');
+        if (!(await client.isInsideFolder(id, folder.folderId, 8, signal))) {
+          throw new Error('That file is outside the attached folder.');
+        }
+        const entry = await client.getEntry(id, signal);
+        return client.readFileText(entry, signal);
+      },
     },
   ];
 }

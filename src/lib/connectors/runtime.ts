@@ -1,7 +1,7 @@
 import { fetch as expoFetch } from 'expo/fetch';
 
 import type { ToolExecutor } from '../llm/agent';
-import { githubResource } from '../projects';
+import { driveFolders, githubResource } from '../projects';
 import type { Project } from '../projects';
 import { deleteSecret, getSecret, setSecret } from '../secure';
 import { useConnectors } from '@/store/connectors';
@@ -11,7 +11,7 @@ import type { GitHubClient, GitHubFetch } from './github';
 import { createGoogleClient } from './google';
 import type { GoogleFetch } from './google';
 import { getGoogleAccessToken } from './googleAuth';
-import { githubTools, googleTools } from './tools';
+import { driveFolderTools, githubTools, googleTools } from './tools';
 
 const ghFetch = expoFetch as unknown as GitHubFetch;
 const gFetch = expoFetch as unknown as GoogleFetch;
@@ -35,6 +35,10 @@ export async function disconnectGitHub(): Promise<void> {
   useConnectors.getState().setGitHub({ connected: false });
 }
 
+export function getGoogleClient() {
+  return createGoogleClient(getGoogleAccessToken, gFetch);
+}
+
 export async function getGitHubClient(): Promise<GitHubClient | null> {
   const token = await getSecret(GITHUB_SECRET);
   return token ? createGitHubClient(token, ghFetch) : null;
@@ -55,7 +59,9 @@ export async function buildTools(project: Project | null, modelSupportsTools: bo
     if (client) tools.push(...githubTools(client, repo.repo, repo.ref));
   }
   if (enabled.google && google.connected) {
-    tools.push(...googleTools(createGoogleClient(getGoogleAccessToken, gFetch)));
+    const client = createGoogleClient(getGoogleAccessToken, gFetch);
+    tools.push(...googleTools(client));
+    for (const folder of driveFolders(project)) tools.push(...driveFolderTools(client, folder));
   }
   return tools;
 }

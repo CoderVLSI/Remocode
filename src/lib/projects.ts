@@ -2,6 +2,9 @@
 
 export type ProjectResource =
   | { id: string; kind: 'github'; repo: string; ref?: string }
+  /** A Google Drive folder the model may browse and read (read-only, scoped to this folder). */
+  | { id: string; kind: 'drive-folder'; folderId: string; name: string }
+  /** Pinned text: an uploaded file, a file from GitHub, or a snapshot of a Drive file. */
   | { id: string; kind: 'file'; name: string; content: string; source?: string };
 
 /** A resource before it is assigned an id. (`Omit` does not distribute over unions.) */
@@ -23,6 +26,10 @@ export function githubResource(project: Project | null | undefined) {
   return project?.resources.find((r): r is Extract<ProjectResource, { kind: 'github' }> => r.kind === 'github') ?? null;
 }
 
+export function driveFolders(project: Project | null | undefined) {
+  return (project?.resources ?? []).filter((r): r is Extract<ProjectResource, { kind: 'drive-folder' }> => r.kind === 'drive-folder');
+}
+
 export function buildSystemPrompt(base: string, project: Project | null | undefined, budget = PINNED_CONTEXT_BUDGET): string {
   const parts: string[] = [base.trim()];
   if (!project) return parts.join('\n\n');
@@ -35,6 +42,13 @@ export function buildSystemPrompt(base: string, project: Project | null | undefi
     parts.push(
       `The GitHub repository ${repo.repo}${repo.ref ? ` (ref: ${repo.ref})` : ''} is attached. ` +
         'If tools are available, use them to browse and read files instead of guessing.',
+    );
+  }
+
+  for (const folder of driveFolders(project)) {
+    parts.push(
+      `The Google Drive folder "${folder.name}" is attached. If tools are available, use drive_folder_list and ` +
+        `drive_folder_read to browse and read files inside it.`,
     );
   }
 

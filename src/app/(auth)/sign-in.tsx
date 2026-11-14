@@ -4,10 +4,11 @@ import { Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { friendlyAuthError, validateEmail, validatePassword } from '@/lib/authValidation';
-import { isSupabaseConfigured } from '@/lib/supabase';
+import { getBackendHost, isBackendConfigured } from '@/lib/supabase';
 import { useAuth } from '@/store/auth';
 import { colors, space } from '@/theme';
-import { Banner, Button, Icon, Input, Screen, T } from '@/ui/components';
+import { BackendSetup } from '@/ui/BackendSetup';
+import { Button, Icon, Input, Screen, T } from '@/ui/components';
 
 type Mode = 'code' | 'password';
 
@@ -22,6 +23,10 @@ export default function SignIn() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [changingBackend, setChangingBackend] = useState(false);
+  // Re-read after saving: the module state changes without a React render of its own.
+  const [, bump] = useState(0);
+  const configured = isBackendConfigured();
 
   const submit = async () => {
     const eErr = validateEmail(email);
@@ -57,11 +62,12 @@ export default function SignIn() {
         <T variant="small">Your AI agent, on your phone. Sign in to sync projects and devices.</T>
       </View>
 
-      {!isSupabaseConfigured ? (
-        <Banner
-          tone="warning"
-          title="Supabase is not configured"
-          message="Copy .env.example to .env and set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY, then restart the dev server."
+      {!configured || changingBackend ? (
+        <BackendSetup
+          onDone={() => {
+            setChangingBackend(false);
+            bump((n) => n + 1);
+          }}
         />
       ) : null}
 
@@ -126,8 +132,14 @@ export default function SignIn() {
         title={mode === 'code' ? 'Email me a code' : creating ? 'Create account' : 'Sign in'}
         onPress={submit}
         loading={busy}
-        disabled={!isSupabaseConfigured}
+        disabled={!configured}
       />
+
+      {configured && !changingBackend ? (
+        <Pressable onPress={() => setChangingBackend(true)} accessibilityRole="button" style={{ alignItems: 'center', padding: space.sm }}>
+          <T variant="small">Backend: {getBackendHost()} · Change</T>
+        </Pressable>
+      ) : null}
 
       {mode === 'password' ? (
         <Pressable onPress={() => setCreating((c) => !c)} accessibilityRole="button" style={{ alignItems: 'center', padding: space.sm }}>
