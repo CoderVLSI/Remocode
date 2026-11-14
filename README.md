@@ -58,6 +58,22 @@ npm run selftest -- https://YOUR-DEPLOYMENT.convex.cloud   # optional: checks si
 
 Then paste the URL into the app (or put it in `.env` as `EXPO_PUBLIC_CONVEX_URL`). For production, deploy with `npx convex deploy` and run `npm run convex:setup -- --prod`.
 
+**No computer? Do it all from Termux on your phone.** The backend only needs Node; it does not need the React Native tools. `scripts/backend-only.sh` makes a small copy (about 100 MB instead of 1 GB+):
+
+```bash
+pkg update && pkg install -y nodejs git
+git clone https://github.com/CoderVLSI/Remocode.git && cd Remocode
+git checkout ccr-e333e571-3t51sf
+./scripts/backend-only.sh ~/remocode-backend
+cd ~/remocode-backend && npm install && (cd companion && npm install)
+npx convex login --no-open --login-flow poll   # prints a link: open it in your phone's browser and approve
+npx convex dev --once --configure new --dev-deployment cloud   # pick a team, name the project; deploys once and prints the URL
+npm run convex:setup
+npm run selftest -- https://YOUR-DEPLOYMENT.convex.cloud
+```
+
+Choose a **cloud** deployment (not local) so the app can reach it. The self-test pairs a pretend computer, so it works on a phone too. A real companion on Termux would only drive the phone itself, so for Remote Control use your actual computer.
+
 - **Passwords work immediately.** Sign up and sign in with email + password need nothing else.
 - **Emailed codes (optional).** Convex has no built-in email sender. Create a free [Resend](https://resend.com) key and run `npx convex env set AUTH_RESEND_KEY re_xxx`. Then new accounts must confirm their email with a 6-digit code, and the "Email code" tab works. Resend's shared sender only delivers to your own Resend account address until you verify a domain and set `npx convex env set AUTH_EMAIL_FROM "Remo Code <auth@yourdomain.com>"`.
 - Production Convex deployments hide server error text, so the app words sign-in failures from context ("wrong email or password") instead of showing raw messages.
