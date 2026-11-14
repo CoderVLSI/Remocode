@@ -76,17 +76,34 @@ export async function listEvents(taskId: string, afterId = 0): Promise<RemoteEve
 
 /** Subscribes to device presence changes. Returns an unsubscribe function. */
 export function subscribeDevices(onChange: () => void): () => void {
-  const channel = supabase
-    .channel('devices')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, onChange)
-    .subscribe();
-  return () => {
-    void supabase.removeChannel(channel);
-  };
+  try {
+    const channel = supabase
+      .channel('devices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, onChange)
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  } catch {
+    // No backend (or realtime unavailable): the screen still works from its normal fetches.
+    return () => {};
+  }
 }
 
 /** Subscribes to live events and status changes for one task. */
 export function subscribeTask(
+  taskId: string,
+  handlers: { onEvent: (e: RemoteEvent) => void; onTask: (t: RemoteTask) => void },
+): () => void {
+  try {
+    return subscribeTaskUnsafe(taskId, handlers);
+  } catch {
+    // The caller also polls, so a missing realtime channel only costs a few seconds of latency.
+    return () => {};
+  }
+}
+
+function subscribeTaskUnsafe(
   taskId: string,
   handlers: { onEvent: (e: RemoteEvent) => void; onTask: (t: RemoteTask) => void },
 ): () => void {

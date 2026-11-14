@@ -1,5 +1,6 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Alert, View } from 'react-native';
 
 import { useChat } from '@/store/chat';
@@ -11,7 +12,8 @@ import { GitHubFilePicker } from '@/ui/pickers';
 export default function ProjectScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const project = useChat((s) => s.projects.find((p) => p.id === id));
-  const conversations = useChat((s) => s.conversations.filter((c) => c.projectId === id));
+  // useShallow: filter() returns a new array each time, which would otherwise loop forever.
+  const conversations = useChat(useShallow((s) => s.conversations.filter((c) => c.projectId === id)));
   const { updateProject, deleteProject, addResource, removeResource, createConversation } = useChat.getState();
 
   const [adding, setAdding] = useState(false);

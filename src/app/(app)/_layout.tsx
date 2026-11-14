@@ -13,7 +13,7 @@ export default function AppLayout() {
         contentStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Stack.Screen name="index" options={{ title: 'Remocode' }} />
+      <Stack.Screen name="home" options={{ title: 'Remo Code' }} />
       <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
       <Stack.Screen name="voice" options={{ title: 'Voice', presentation: 'fullScreenModal', headerShown: false }} />
       <Stack.Screen name="settings/index" options={{ title: 'Settings' }} />

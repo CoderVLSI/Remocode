@@ -20,10 +20,13 @@ const KEY_HELP: Record<string, string> = {
   custom: 'Any OpenAI-compatible server: Ollama, LM Studio, vLLM, Groq, Together… The key is optional for local servers.',
 };
 
+// A module-level empty list: a selector that returns a fresh `[]` every call makes zustand re-render forever.
+const NO_MODELS: string[] = [];
+
 function ProviderCard({ provider }: { provider: Exclude<ProviderId, 'local'> }) {
   const hasKey = useSettings((s) => !!s.hasKey[provider]);
   const baseUrl = useSettings((s) => (provider === 'openai' || provider === 'custom' ? s.baseUrls[provider] : undefined));
-  const extra = useSettings((s) => s.extraModels[provider] ?? []);
+  const extra = useSettings((s) => s.extraModels[provider] ?? NO_MODELS);
   const fetched = useSettings((s) => s.fetchedModels[provider]?.length ?? 0);
   const { saveApiKey, removeApiKey, setBaseUrl, addExtraModel, removeExtraModel } = useSettings.getState();
 
