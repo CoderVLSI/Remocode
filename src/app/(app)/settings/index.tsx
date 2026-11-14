@@ -1,8 +1,11 @@
+import { useAuthActions } from '@convex-dev/auth/react';
+import { useQuery } from 'convex/react';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert, Switch, View } from 'react-native';
 
-import { useAuth } from '@/store/auth';
+import { api } from '../../../../convex/_generated/api';
+import { backendHost, useBackend } from '@/store/backend';
 import { DEFAULT_SYSTEM_PROMPT, useSettings } from '@/store/settings';
 import { colors, space } from '@/theme';
 import { LIVE_VOICES } from '@/lib/live/protocol';
@@ -11,8 +14,9 @@ import { Button, Card, Icon, Input, Row, Screen, SectionTitle, Sheet, T } from '
 import { useModels } from '@/ui/ModelPicker';
 
 export default function SettingsScreen() {
-  const user = useAuth((s) => s.user);
-  const signOut = useAuth((s) => s.signOut);
+  const me = useQuery(api.users.me);
+  const { signOut } = useAuthActions();
+  const host = backendHost(useBackend((s) => s.url));
   const { selected } = useModels();
   const systemPrompt = useSettings((s) => s.systemPrompt);
   const setSystemPrompt = useSettings((s) => s.setSystemPrompt);
@@ -29,7 +33,7 @@ export default function SettingsScreen() {
     <Screen>
       <SectionTitle>Account</SectionTitle>
       <Card>
-        <Row title={user?.email ?? 'Signed in'} subtitle="Synced devices and projects use this account" icon="person-circle-outline" />
+        <Row title={me?.email ?? 'Signed in'} subtitle={host ? `Backend: ${host}` : 'Your computers are tied to this account'} icon="person-circle-outline" />
       </Card>
 
       <SectionTitle>Models</SectionTitle>

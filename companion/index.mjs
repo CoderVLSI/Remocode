@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Remocode companion: runs tasks sent from the phone app on this computer.
+// Remo Code companion: runs tasks sent from the phone app on this computer.
 //
-//   node index.mjs login    sign in with the same email you use in the app
-//   node index.mjs run      register this computer and start taking tasks
-//   node index.mjs status   show who is signed in
-//   node index.mjs logout   forget the session and device id
+//   node index.mjs pair     pair this computer using the code shown in the app
+//   node index.mjs run      take tasks from your phone (keep this running)
+//   node index.mjs status   show what this computer is paired with
+//   node index.mjs logout   unpair this computer and forget the device token
 //
 // Config (environment variables, or the project's .env):
-//   REMOCODE_SUPABASE_URL / REMOCODE_SUPABASE_ANON_KEY   (or EXPO_PUBLIC_SUPABASE_*)
+//   REMOCODE_CONVEX_URL     your deployment URL (asked for when pairing; saved afterwards)
 //   REMOCODE_AGENT_CMD      executable to run             default: claude
 //   REMOCODE_AGENT_ARGS     JSON array, with "{prompt}"   default: ["-p","--output-format","text","--","{prompt}"]
 //   REMOCODE_WORKDIR        working directory for tasks   default: current directory
@@ -21,139 +21,130 @@ import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
-import { createClient } from '@supabase/supabase-js';
+import { ConvexClient, ConvexHttpClient } from 'convex/browser';
+import { anyApi } from 'convex/server';
 
-import { buildArgs, createBatcher, DEFAULT_AGENT_CMD, parseArgsEnv, parseDotenv } from './src/lib.mjs';
+import { buildArgs, createBatcher, DEFAULT_AGENT_CMD, normalizeConvexUrl, parseArgsEnv, parseDotenv, Signal } from './src/lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATE_DIR = join(homedir(), '.remocode');
-const SESSION_FILE = join(STATE_DIR, 'session.json');
 const DEVICE_FILE = join(STATE_DIR, 'device.json');
-
 const HEARTBEAT_MS = 15_000;
-const POLL_MS = 3_000;
-const CANCEL_POLL_MS = 2_000;
+const IDLE_RECHECK_MS = 60_000;
 
-// ---------- config ----------
+// Function references by name; no code generation needed in the companion.
+const api = anyApi;
+
+// ---------- config and local state ----------
 
 function loadEnv() {
   const env = { ...process.env };
   for (const file of [join(process.cwd(), '.env'), join(HERE, '..', '.env')]) {
-    if (existsSync(file)) {
-      for (const [k, v] of Object.entries(parseDotenv(readFileSync(file, 'utf8')))) env[k] ??= v;
-    }
+    if (existsSync(file)) for (const [k, v] of Object.entries(parseDotenv(readFileSync(file, 'utf8')))) env[k] ??= v;
   }
   return env;
 }
-
 const env = loadEnv();
-const SUPABASE_URL = env.REMOCODE_SUPABASE_URL ?? env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = env.REMOCODE_SUPABASE_ANON_KEY ?? env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 function fail(message) {
   console.error(`remocode: ${message}`);
   process.exit(1);
 }
 
-// ---------- local state (session lives in a 0600 file under ~/.remocode) ----------
-
-function ensureStateDir() {
-  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-}
-
-function readJson(file) {
+function readDevice() {
   try {
-    return JSON.parse(readFileSync(file, 'utf8'));
+    return JSON.parse(readFileSync(DEVICE_FILE, 'utf8'));
   } catch {
     return null;
   }
 }
 
-function writePrivate(file, data) {
-  ensureStateDir();
-  writeFileSync(file, JSON.stringify(data), { mode: 0o600 });
+/** The device token is a credential: keep it in a file only this user can read. */
+function writeDevice(data) {
+  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(DEVICE_FILE, JSON.stringify(data), { mode: 0o600 });
   try {
-    chmodSync(file, 0o600);
+    chmodSync(DEVICE_FILE, 0o600);
   } catch {
     // Windows: permissions are inherited from the user profile directory.
   }
 }
 
-/** Storage adapter so supabase-js persists and refreshes the session on disk. */
-const fileStorage = {
-  getItem: (key) => (readJson(SESSION_FILE) ?? {})[key] ?? null,
-  setItem: (key, value) => writePrivate(SESSION_FILE, { ...(readJson(SESSION_FILE) ?? {}), [key]: value }),
-  removeItem: (key) => {
-    const data = readJson(SESSION_FILE) ?? {};
-    delete data[key];
-    writePrivate(SESSION_FILE, data);
-  },
-};
+function requireDevice() {
+  const device = readDevice();
+  if (!device?.token || !device?.url) fail('This computer is not paired. Run: node index.mjs pair');
+  return device;
+}
 
-function client() {
-  if (!SUPABASE_URL || !SUPABASE_KEY) {
-    fail('Supabase is not configured. Set REMOCODE_SUPABASE_URL and REMOCODE_SUPABASE_ANON_KEY (or run from the project folder that has a .env).');
-  }
-  return createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { storage: fileStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
-  });
+/** Convex wraps server errors in a prefix; show the useful part. */
+function clean(err) {
+  return String(err?.data ?? err?.message ?? err)
+    .replace(/^\[CONVEX [^\]]*\]\s*(\[Request ID: [^\]]*\]\s*)?(Server Error\s*)?/i, '')
+    .replace(/^Uncaught (Convex)?Error:\s*/i, '')
+    .split('\n')[0];
 }
 
 // ---------- commands ----------
 
-async function login() {
-  const supabase = client();
+async function pair() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const email = (await rl.question('Email (the one you use in the app): ')).trim().toLowerCase();
-    // shouldCreateUser:false so a typo never silently creates a stray account.
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-    if (error) fail(error.message.includes('Signups not allowed') ? 'No account with that email. Sign up in the app first.' : error.message);
-    const token = (await rl.question('Code from the email: ')).replace(/\D/g, '');
-    const { data, error: verifyError } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
-    if (verifyError) fail(verifyError.message);
-    console.log(`Signed in as ${data.user?.email}. Now run: node index.mjs run`);
+    let url;
+    const fromEnv = env.REMOCODE_CONVEX_URL ?? env.EXPO_PUBLIC_CONVEX_URL;
+    for (;;) {
+      try {
+        url = normalizeConvexUrl(fromEnv ?? (await rl.question('Convex deployment URL (the one you entered in the app): ')));
+        break;
+      } catch (err) {
+        if (fromEnv) fail(err.message);
+        console.log(err.message);
+      }
+    }
+    const code = await rl.question('Pairing code from the app (Remote Control → Pair a computer): ');
+    const name = env.REMOCODE_DEVICE_NAME || hostname();
+    const client = new ConvexHttpClient(url);
+    let result;
+    try {
+      result = await client.action(api.pairing.redeem, { code, name, platform: platform() });
+    } catch (err) {
+      fail(clean(err));
+    }
+    writeDevice({ url, token: result.token, deviceId: result.deviceId, name });
+    console.log(`Paired as “${name}”. Now run: node index.mjs run`);
   } finally {
     rl.close();
   }
 }
 
-function logout() {
-  rmSync(SESSION_FILE, { force: true });
-  rmSync(DEVICE_FILE, { force: true });
-  console.log('Signed out. The computer stays listed in the app until you remove it there.');
-}
-
 async function status() {
-  const supabase = client();
-  const { data } = await supabase.auth.getUser();
-  if (!data.user) return console.log('Not signed in. Run: node index.mjs login');
-  const device = readJson(DEVICE_FILE);
-  console.log(`Signed in as ${data.user.email}${device ? `, device ${device.id}` : ''}`);
+  const device = readDevice();
+  if (!device) return console.log('Not paired. Run: node index.mjs pair');
+  const client = new ConvexHttpClient(device.url);
+  try {
+    await client.mutation(api.companion.heartbeat, { token: device.token });
+    console.log(`Paired as “${device.name}” on ${new URL(device.url).host}. The backend accepted this computer.`);
+  } catch (err) {
+    console.log(`Paired as “${device.name}” on ${new URL(device.url).host}, but: ${clean(err)}`);
+  }
 }
 
-async function registerDevice(supabase) {
-  const name = env.REMOCODE_DEVICE_NAME || hostname();
-  const saved = readJson(DEVICE_FILE);
-  if (saved?.id) {
-    const { data } = await supabase
-      .from('devices')
-      .update({ name, platform: platform(), last_seen_at: new Date().toISOString() })
-      .eq('id', saved.id)
-      .select('id')
-      .maybeSingle();
-    if (data) return saved.id;
+async function logout() {
+  const device = readDevice();
+  if (device) {
+    try {
+      await new ConvexHttpClient(device.url).mutation(api.companion.unpair, { token: device.token });
+      console.log('Removed this computer from your account.');
+    } catch (err) {
+      console.log(`Could not tell the backend (${clean(err)}). You can remove it from the app instead.`);
+    }
   }
-  const { data, error } = await supabase.from('devices').insert({ name, platform: platform() }).select('id').single();
-  if (error) fail(`Could not register this computer: ${error.message}`);
-  writePrivate(DEVICE_FILE, { id: data.id });
-  return data.id;
+  rmSync(DEVICE_FILE, { force: true });
+  console.log('Forgot the local device token.');
 }
 
 async function run() {
-  const supabase = client();
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) fail('Not signed in. Run: node index.mjs login');
+  const device = requireDevice();
+  const { token } = device;
 
   const cmd = env.REMOCODE_AGENT_CMD || DEFAULT_AGENT_CMD;
   let template;
@@ -166,17 +157,30 @@ async function run() {
   if (!existsSync(cwd)) fail(`REMOCODE_WORKDIR does not exist: ${cwd}`);
   const timeoutMs = Math.max(1, Number(env.REMOCODE_TIMEOUT_MIN) || 30) * 60_000;
 
-  const deviceId = await registerDevice(supabase);
-  console.log(`Remocode companion online as ${auth.user.email}`);
+  const client = new ConvexClient(device.url);
+  const name = env.REMOCODE_DEVICE_NAME || device.name;
+
+  try {
+    await client.mutation(api.companion.heartbeat, { token, name });
+    const stale = await client.mutation(api.companion.failStale, { token });
+    if (stale) console.log(`Marked ${stale} unfinished task(s) from a previous run as failed.`);
+  } catch (err) {
+    client.close();
+    fail(clean(err));
+  }
+
+  console.log(`Remo Code companion online as “${name}”`);
   console.log(`  agent:   ${cmd} ${template.join(' ')}`);
   console.log(`  folder:  ${cwd}`);
   console.log('  Waiting for tasks from your phone. Press Ctrl+C to stop.');
 
   const heartbeat = setInterval(() => {
-    supabase.from('devices').update({ last_seen_at: new Date().toISOString() }).eq('id', deviceId).then(({ error }) => {
-      if (error) console.warn(`heartbeat failed: ${error.message}`);
-    });
+    client.mutation(api.companion.heartbeat, { token }).catch((e) => console.warn(`heartbeat failed: ${clean(e)}`));
   }, HEARTBEAT_MS);
+
+  // Told the moment a task is queued; no polling while idle.
+  const work = new Signal();
+  const stopWatching = client.onUpdate(api.companion.queuedCount, { token }, (n) => n > 0 && work.notify(), (e) => console.warn(`watch error: ${clean(e)}`));
 
   let current = null; // { taskId, child }
   let stopping = false;
@@ -186,77 +190,45 @@ async function run() {
     stopping = true;
     console.log(`\n${signal}: shutting down…`);
     clearInterval(heartbeat);
+    stopWatching();
     if (current) {
       current.child.kill('SIGTERM');
-      await supabase
-        .from('remote_tasks')
-        .update({ status: 'failed', finished_at: new Date().toISOString() })
-        .eq('id', current.taskId)
-        .eq('status', 'running');
+      await client.mutation(api.companion.finish, { token, taskId: current.taskId, status: 'failed' }).catch(() => {});
     }
+    await client.close();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  async function claimNext() {
-    const { data: queued, error } = await supabase
-      .from('remote_tasks')
-      .select('id,prompt')
-      .eq('device_id', deviceId)
-      .eq('status', 'queued')
-      .order('created_at', { ascending: true })
-      .limit(1);
-    if (error) {
-      console.warn(`poll failed: ${error.message}`);
-      return null;
-    }
-    if (!queued?.length) return null;
-    // Conditional update makes claiming atomic if two companions ever share a device id.
-    const { data: claimed } = await supabase
-      .from('remote_tasks')
-      .update({ status: 'running', started_at: new Date().toISOString() })
-      .eq('id', queued[0].id)
-      .eq('status', 'queued')
-      .select('id,prompt');
-    return claimed?.[0] ?? null;
-  }
-
   async function runTask(task) {
-    console.log(`▶ task ${task.id.slice(0, 8)}: ${task.prompt.slice(0, 80).replace(/\s+/g, ' ')}`);
+    console.log(`▶ task ${String(task.id).slice(0, 8)}: ${task.prompt.slice(0, 80).replace(/\s+/g, ' ')}`);
 
-    const rows = [];
+    // Serialise writes so output order is preserved.
     let writing = Promise.resolve();
     const send = (kind, data) => {
-      rows.push({ task_id: task.id, kind, data });
-      // Serialise inserts so event ids (and therefore display order) match output order.
-      writing = writing.then(async () => {
-        const batch = rows.splice(0, rows.length);
-        if (!batch.length) return;
-        const { error } = await supabase.from('remote_events').insert(batch);
-        if (error) console.warn(`could not send output: ${error.message}`);
-      });
+      writing = writing.then(() =>
+        client.mutation(api.companion.appendEvents, { token, taskId: task.id, events: [{ kind, data }] }).catch((e) => console.warn(`could not send output: ${clean(e)}`)),
+      );
     };
     const batcher = createBatcher({ onFlush: send });
     send('info', `Running ${cmd} in ${cwd}`);
 
     let finished = false;
+    let stopCancelWatch = () => {};
+    let timeoutTimer;
     const finish = async (status, exitCode, note) => {
       if (finished) return;
       finished = true;
-      clearInterval(cancelTimer);
+      stopCancelWatch();
       clearTimeout(timeoutTimer);
       batcher.flush();
       if (note) send('info', note);
       await writing;
-      // Conditional on 'running' so a cancellation made from the phone is never overwritten.
-      await supabase
-        .from('remote_tasks')
-        .update({ status, exit_code: exitCode, finished_at: new Date().toISOString() })
-        .eq('id', task.id)
-        .eq('status', 'running');
+      // The backend only lets a running task finish, so a cancel from the phone is never overwritten.
+      await client.mutation(api.companion.finish, { token, taskId: task.id, status, exitCode: exitCode ?? undefined }).catch((e) => console.warn(`could not finish: ${clean(e)}`));
       current = null;
-      console.log(`■ task ${task.id.slice(0, 8)} ${status}${exitCode !== null ? ` (exit ${exitCode})` : ''}`);
+      console.log(`■ task ${String(task.id).slice(0, 8)} ${status}${exitCode !== null && exitCode !== undefined ? ` (exit ${exitCode})` : ''}`);
     };
 
     let child;
@@ -275,14 +247,16 @@ async function run() {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 5_000).unref();
     };
-    const cancelTimer = setInterval(async () => {
-      const { data } = await supabase.from('remote_tasks').select('status').eq('id', task.id).maybeSingle();
-      if (data?.status === 'cancelled') {
+    // Instant cancel: the backend pushes the new status the moment the phone cancels.
+    let cancelled = false;
+    stopCancelWatch = client.onUpdate(api.companion.taskStatus, { token, taskId: task.id }, (status) => {
+      if (status === 'cancelled' && !cancelled) {
+        cancelled = true;
         send('info', 'Cancelled from the phone.');
         terminate();
       }
-    }, CANCEL_POLL_MS);
-    const timeoutTimer = setTimeout(() => {
+    }, () => {});
+    timeoutTimer = setTimeout(() => {
       send('info', `Timed out after ${Math.round(timeoutMs / 60_000)} minutes.`);
       terminate();
     }, timeoutMs);
@@ -302,20 +276,20 @@ async function run() {
   // One task at a time: simple, and keeps the agent from racing itself in one working folder.
   while (!stopping) {
     try {
-      const task = await claimNext();
+      const task = await client.mutation(api.companion.claimNext, { token });
       if (task) await runTask(task);
-      else await new Promise((r) => setTimeout(r, POLL_MS));
+      else await work.wait(IDLE_RECHECK_MS);
     } catch (err) {
-      console.warn(`error: ${err.message}`);
-      await new Promise((r) => setTimeout(r, POLL_MS));
+      console.warn(`error: ${clean(err)}`);
+      await new Promise((r) => setTimeout(r, 3_000));
     }
   }
 }
 
 const command = process.argv[2];
 switch (command) {
-  case 'login':
-    await login();
+  case 'pair':
+    await pair();
     break;
   case 'run':
     await run();
@@ -324,9 +298,9 @@ switch (command) {
     await status();
     break;
   case 'logout':
-    logout();
+    await logout();
     break;
   default:
-    console.log('Usage: node index.mjs <login | run | status | logout>');
+    console.log('Usage: node index.mjs <pair | run | status | logout>');
     process.exit(command ? 1 : 0);
 }

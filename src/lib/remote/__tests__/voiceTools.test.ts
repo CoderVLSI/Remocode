@@ -4,12 +4,13 @@ import type { RemoteApi } from '../voiceTools';
 
 const NOW = Date.parse('2026-11-14T12:00:00Z');
 const dev = (name: string, secondsAgo: number): Device => ({
-  id: `${name}-id`,
+  _id: `${name}-id` as Device['_id'],
   name,
   platform: 'linux',
-  last_seen_at: new Date(NOW - secondsAgo * 1000).toISOString(),
+  lastSeenAt: NOW - secondsAgo * 1000,
 });
-const TASK_ID = '123e4567-e89b-12d3-a456-426614174000';
+// Convex ids are 20-40 lowercase alphanumerics.
+const TASK_ID = 'k17abcdef0123456789abcdefghi';
 
 describe('pickDevice', () => {
   const laptop = dev('Work laptop', 5);
@@ -49,13 +50,22 @@ function fakeApi(over: Partial<RemoteApi> = {}, state: { status: TaskStatus; eve
     listDevices: async () => [dev('Work laptop', 5)],
     createTask: async (deviceId, prompt) => {
       created.push({ deviceId, prompt });
-      return { id: TASK_ID, device_id: deviceId, prompt, status: 'queued', exit_code: null, created_at: '', started_at: null, finished_at: null };
+      return TASK_ID;
     },
     getTask: async () => {
       state.polls += 1;
-      return { id: TASK_ID, device_id: 'd', prompt: 'p', status: state.status, exit_code: state.status === 'done' ? 0 : null, created_at: '', started_at: null, finished_at: null } as RemoteTask;
+      return {
+        _id: TASK_ID,
+        deviceId: 'd',
+        prompt: 'p',
+        status: state.status,
+        exitCode: state.status === 'done' ? 0 : null,
+        startedAt: null,
+        finishedAt: null,
+        createdAt: 0,
+      } as unknown as RemoteTask;
     },
-    listEvents: async (_id, after = 0) => state.events.filter((e) => e.id > after),
+    listEvents: async () => state.events,
     cancelTask: async (id) => {
       cancelled.push(id);
     },
@@ -67,7 +77,7 @@ function fakeApi(over: Partial<RemoteApi> = {}, state: { status: TaskStatus; eve
   };
   return { api, created, cancelled, state };
 }
-const out = (id: number, data: string, kind: RemoteEvent['kind'] = 'stdout'): RemoteEvent => ({ id, task_id: TASK_ID, kind, data, created_at: '' });
+const out = (data: string, kind: RemoteEvent['kind'] = 'stdout'): RemoteEvent => ({ _id: `e${Math.random()}` as RemoteEvent['_id'], kind, data });
 const tool = (tools: ReturnType<typeof createRemoteTools>, name: string) => tools.find((t) => t.spec.name === name)!;
 
 describe('voice remote tools', () => {
@@ -98,7 +108,7 @@ describe('voice remote tools', () => {
   });
 
   it('waits for completion, then reports status and output', async () => {
-    const state = { status: 'running' as TaskStatus, events: [out(1, 'compiling…\n'), out(2, 'warn\n', 'stderr')], polls: 0 };
+    const state = { status: 'running' as TaskStatus, events: [out('compiling…\n'), out('warn\n', 'stderr')], polls: 0 };
     const { api } = fakeApi({}, state);
     const check = tool(createRemoteTools(api), 'check_task');
     // the task finishes on the third poll
@@ -123,7 +133,7 @@ describe('voice remote tools', () => {
   });
 
   it('caps the wait and truncates long output to the tail', async () => {
-    const big = Array.from({ length: 5 }, (_, i) => out(i + 1, `${String(i).repeat(2000)}\n`));
+    const big = Array.from({ length: 5 }, (_, i) => out(`${String(i).repeat(2000)}\n`));
     const { api } = fakeApi({}, { status: 'done', events: big, polls: 0 });
     const text = await tool(createRemoteTools(api), 'check_task').execute({ task_id: TASK_ID, wait_seconds: 9999 }, {});
     expect(text.length).toBeLessThan(3300);

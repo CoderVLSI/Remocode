@@ -41,20 +41,32 @@ describe('otp code', () => {
 });
 
 describe('friendlyAuthError', () => {
+  const e = (m: string) => new Error(m);
   it.each([
-    [{ code: 'over_email_send_rate_limit', message: 'x' }, /too many attempts/i],
-    [{ status: 429, message: 'x' }, /too many attempts/i],
-    [{ code: 'otp_expired', message: 'Token has expired or is invalid' }, /expired/i],
-    [{ message: 'Token has expired or is invalid' }, /expired/i],
-    [{ message: 'Invalid OTP token' }, /not right/i],
-    [{ code: 'invalid_credentials', message: 'Invalid login credentials' }, /wrong email or password/i],
-    [{ code: 'email_not_confirmed', message: 'Email not confirmed' }, /confirm your email/i],
-    [{ code: 'user_already_exists', message: 'User already registered' }, /already exists/i],
-    [{ code: 'weak_password', message: 'Password should be at least 6 characters' }, /too weak/i],
-    [{ message: 'Network request failed' }, /no connection/i],
-    [{ message: 'Something unusual' }, /something unusual/i],
-    [null, /try again/i],
-  ])('maps %j', (err, expected) => {
-    expect(friendlyAuthError(err as never)).toMatch(expected);
+    [e('Invalid credentials'), 'signIn', /wrong email or password/i],
+    [e('[CONVEX A(auth:signIn)] [Request ID: abc] Server Error\nUncaught Error: Invalid credentials'), 'signIn', /wrong email or password/i],
+    [e('Account me@x.com already exists'), 'signUp', /already exists/i],
+    [e('Invalid password'), 'signUp', /too weak/i],
+    [e('Could not verify code'), 'verifyCode', /not right or has expired/i],
+    [e('Invalid code'), 'verifyCode', /not right or has expired/i],
+    [e('Too many failed attempts'), 'verifyCode', /too many attempts/i],
+    [e('Network request failed'), 'signIn', /no connection/i],
+    [e('Email codes are not set up on this backend (AUTH_RESEND_KEY is missing).'), 'sendCode', /not set up/i],
+  ])('maps %j', (err, step, expected) => {
+    expect(friendlyAuthError(err, step as never)).toMatch(expected);
+  });
+
+  it('falls back to a likely cause for redacted production errors, per step', () => {
+    const redacted = e('[CONVEX A(auth:signIn)] [Request ID: 1f2e] Server Error');
+    expect(friendlyAuthError(redacted, 'signIn')).toMatch(/wrong email or password/i);
+    expect(friendlyAuthError(redacted, 'signUp')).toMatch(/could not create the account/i);
+    expect(friendlyAuthError(redacted, 'sendCode')).toMatch(/use your password/i);
+    expect(friendlyAuthError(redacted, 'verifyCode')).toMatch(/not right or has expired/i);
+    expect(friendlyAuthError(null, 'signIn')).toMatch(/wrong email or password/i);
+  });
+
+  it('strips Convex prefixes from unknown messages and caps their length', () => {
+    expect(friendlyAuthError(e('[CONVEX A(x)] [Request ID: 9] Something unusual happened'), 'signIn')).toBe('Something unusual happened');
+    expect(friendlyAuthError(e('x'.repeat(500)), 'signIn').length).toBeLessThanOrEqual(200);
   });
 });

@@ -106,3 +106,62 @@ export function parseDotenv(text) {
   }
   return out;
 }
+
+/** Resolves when `notify()` is called or after `ms`, whichever is first. Notifications are not lost. */
+export class Signal {
+  constructor() {
+    this.pending = false;
+    this.wake = null;
+  }
+  notify() {
+    this.pending = true;
+    this.wake?.();
+  }
+  /** Returns true if woken by a notification, false on timeout. */
+  async wait(ms, setTimer = setTimeout, clearTimer = clearTimeout) {
+    if (this.pending) {
+      this.pending = false;
+      return true;
+    }
+    const woken = await new Promise((resolve) => {
+      const timer = setTimer(() => {
+        this.wake = null;
+        resolve(false);
+      }, ms);
+      this.wake = () => {
+        clearTimer(timer);
+        this.wake = null;
+        resolve(true);
+      };
+    });
+    this.pending = false;
+    return woken;
+  }
+}
+
+/**
+ * Normalises a Convex deployment URL: accepts https://name.convex.cloud, a bare host, or a
+ * dashboard link; rejects the .convex.site address (HTTP actions) and plain http except locally.
+ * Returns the URL string, or throws with a helpful message.
+ */
+export function normalizeConvexUrl(raw) {
+  let input = String(raw ?? '').trim();
+  if (!input) throw new Error('Enter your Convex deployment URL, e.g. https://your-name-123.convex.cloud');
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) input = `https://${input}`;
+  let url;
+  try {
+    url = new URL(input);
+  } catch {
+    throw new Error('That does not look like a valid URL.');
+  }
+  if (url.hostname === 'dashboard.convex.dev') {
+    const name = /\/d\/([a-z0-9-]+)/i.exec(url.pathname)?.[1];
+    if (!name) throw new Error('Copy the deployment URL (ending .convex.cloud) from the Convex dashboard settings.');
+    return `https://${name.toLowerCase()}.convex.cloud`;
+  }
+  if (url.hostname.endsWith('.convex.site')) throw new Error('That is the HTTP actions URL (.convex.site). Use the .convex.cloud URL.');
+  const local = /^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(url.hostname);
+  if (url.protocol === 'http:' && !local) throw new Error('Use an https:// URL (plain http is only allowed for local servers).');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Use an https:// URL.');
+  return url.origin;
+}

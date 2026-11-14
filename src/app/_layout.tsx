@@ -4,20 +4,18 @@ import { useEffect, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/store/auth';
+import { BackendProvider } from '@/ui/BackendProvider';
 import { BrandSplash } from '@/ui/BrandSplash';
 import { RootNavigator } from '@/ui/RootNavigator';
 
 // Keep the splash up until the stored session has been read, so signed-in users never see the sign-in screen flash.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-export default function RootLayout() {
-  const session = useAuth((s) => s.session);
+function Gate() {
+  const signedIn = useAuth((s) => s.signedIn);
   const ready = useAuth((s) => s.ready);
-  const init = useAuth((s) => s.init);
-
   const [minTimePassed, setMinTimePassed] = useState(false);
 
-  useEffect(() => init(), [init]);
   useEffect(() => {
     // Show the brand splash long enough to read, even when the stored session loads instantly.
     const t = setTimeout(() => setMinTimePassed(true), 1100);
@@ -36,7 +34,15 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <RootNavigator signedIn={!!session} />
+      <RootNavigator signedIn={signedIn} />
     </SafeAreaProvider>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <BackendProvider>
+      <Gate />
+    </BackendProvider>
   );
 }

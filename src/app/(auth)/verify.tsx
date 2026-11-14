@@ -1,25 +1,25 @@
+import { useAuthActions } from '@convex-dev/auth/react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { friendlyAuthError, isCodeComplete, normalizeCode } from '@/lib/authValidation';
-import { useAuth } from '@/store/auth';
-import type { VerifyKind } from '@/store/auth';
 import { colors, radius, space } from '@/theme';
 import { Button, Screen, T } from '@/ui/components';
 
 const RESEND_SECONDS = 30;
-// Must match "Email OTP Length" in the Supabase dashboard (Auth -> Providers -> Email).
-const CODE_LENGTH = Number(process.env.EXPO_PUBLIC_OTP_LENGTH) || 6;
+const CODE_LENGTH = 6; // matches convex/auth.ts
 
 export default function Verify() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ email: string; kind?: string }>();
   const email = String(params.email ?? '');
-  const kind: VerifyKind = params.kind === 'signup' ? 'signup' : 'email';
-  const { verifyCode, sendCode } = useAuth();
+  const { signIn } = useAuthActions();
 
+  // 'signup': confirming a new password account. 'code': passwordless sign-in. A resend always
+  // switches to 'code', because that sign-in confirms the same email address.
+  const [kind, setKind] = useState<'signup' | 'code'>(params.kind === 'signup' ? 'signup' : 'code');
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,17 +39,18 @@ export default function Verify() {
       setBusy(true);
       setError(null);
       try {
-        await verifyCode(email, value, kind);
-        // The auth gate in the root layout navigates once the session arrives.
+        if (kind === 'signup') await signIn('password', { email, code: value, flow: 'email-verification' });
+        else await signIn('resend-otp', { email, code: value });
+        // The root layout navigates once the session arrives.
       } catch (err) {
-        setError(friendlyAuthError(err as { message?: string; status?: number; code?: string }));
+        setError(friendlyAuthError(err, 'verifyCode'));
         setCode('');
       } finally {
         submitting.current = false;
         setBusy(false);
       }
     },
-    [email, kind, verifyCode],
+    [email, kind, signIn],
   );
 
   const onChange = (text: string) => {
@@ -62,10 +63,11 @@ export default function Verify() {
   const resend = async () => {
     setError(null);
     try {
-      await sendCode(email);
+      await signIn('resend-otp', { email });
+      setKind('code');
       setCooldown(RESEND_SECONDS);
     } catch (err) {
-      setError(friendlyAuthError(err as { message?: string; status?: number; code?: string }));
+      setError(friendlyAuthError(err, 'sendCode'));
     }
   };
 
@@ -81,33 +83,31 @@ export default function Verify() {
         </T>
       </View>
 
-      <View>
-        <TextInput
-          value={code}
-          onChangeText={onChange}
-          keyboardType="number-pad"
-          textContentType="oneTimeCode"
-          autoComplete="one-time-code"
-          maxLength={CODE_LENGTH + 4}
-          autoFocus
-          editable={!busy}
-          accessibilityLabel="Verification code"
-          placeholder="000000"
-          placeholderTextColor={colors.border}
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radius.md,
-            borderWidth: 1,
-            borderColor: error ? colors.danger : colors.border,
-            color: colors.text,
-            fontSize: 32,
-            letterSpacing: 10,
-            textAlign: 'center',
-            paddingVertical: space.lg,
-            fontVariant: ['tabular-nums'],
-          }}
-        />
-      </View>
+      <TextInput
+        value={code}
+        onChangeText={onChange}
+        keyboardType="number-pad"
+        textContentType="oneTimeCode"
+        autoComplete="one-time-code"
+        maxLength={CODE_LENGTH + 4}
+        autoFocus
+        editable={!busy}
+        accessibilityLabel="Verification code"
+        placeholder="000000"
+        placeholderTextColor={colors.border}
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: error ? colors.danger : colors.border,
+          color: colors.text,
+          fontSize: 32,
+          letterSpacing: 10,
+          textAlign: 'center',
+          paddingVertical: space.lg,
+          fontVariant: ['tabular-nums'],
+        }}
+      />
 
       {error ? <T variant="small" style={{ color: colors.danger }}>{error}</T> : null}
 

@@ -1,39 +1,38 @@
-/** Remote Control data model and pure helpers (no native imports). */
+/** Remote Control data model and pure helpers (shapes match convex/devices.ts and convex/tasks.ts). */
+import type { Id } from '../../../convex/_generated/dataModel';
 
 export type TaskStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface Device {
-  id: string;
+  _id: Id<'devices'>;
   name: string;
   platform: string | null;
-  last_seen_at: string;
+  /** Epoch ms of the companion's last heartbeat. */
+  lastSeenAt: number;
 }
 
 export interface RemoteTask {
-  id: string;
-  device_id: string;
+  _id: Id<'tasks'>;
+  deviceId: Id<'devices'>;
   prompt: string;
   status: TaskStatus;
-  exit_code: number | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
+  exitCode: number | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  createdAt: number;
 }
 
 export interface RemoteEvent {
-  id: number;
-  task_id: string;
+  _id: Id<'taskEvents'>;
   kind: 'stdout' | 'stderr' | 'info';
   data: string;
-  created_at: string;
 }
 
 /** The companion heartbeats every 15s; allow a couple of missed beats. */
 export const ONLINE_WINDOW_MS = 45_000;
 
-export function isOnline(device: Pick<Device, 'last_seen_at'>, now = Date.now()): boolean {
-  const seen = Date.parse(device.last_seen_at);
-  return Number.isFinite(seen) && now - seen <= ONLINE_WINDOW_MS;
+export function isOnline(device: Pick<Device, 'lastSeenAt'>, now = Date.now()): boolean {
+  return Number.isFinite(device.lastSeenAt) && now - device.lastSeenAt <= ONLINE_WINDOW_MS;
 }
 
 export function isFinal(status: TaskStatus): boolean {
@@ -55,22 +54,13 @@ export function statusLabel(status: TaskStatus): string {
   }
 }
 
-/** Merges event batches: dedupes by id (realtime and polling overlap) and orders by id. */
-export function mergeEvents(existing: RemoteEvent[], incoming: RemoteEvent[]): RemoteEvent[] {
-  if (incoming.length === 0) return existing;
-  const byId = new Map<number, RemoteEvent>();
-  for (const e of existing) byId.set(e.id, e);
-  for (const e of incoming) byId.set(e.id, e);
-  return [...byId.values()].sort((a, b) => a.id - b.id);
-}
-
 export interface OutputSegment {
   kind: RemoteEvent['kind'];
   text: string;
 }
 
 /** Joins consecutive events of the same kind so the console renders few, large text runs. */
-export function toSegments(events: RemoteEvent[]): OutputSegment[] {
+export function toSegments(events: Pick<RemoteEvent, 'kind' | 'data'>[]): OutputSegment[] {
   const out: OutputSegment[] = [];
   for (const e of events) {
     const text = e.kind === 'info' ? `\n# ${e.data.trim()}\n` : e.data;
@@ -81,6 +71,8 @@ export function toSegments(events: RemoteEvent[]): OutputSegment[] {
   return out;
 }
 
-export function lastEventId(events: RemoteEvent[]): number {
-  return events.length ? events[events.length - 1].id : 0;
+/** "9:41" style countdown for a pairing code. */
+export function formatCountdown(msLeft: number): string {
+  const s = Math.max(0, Math.ceil(msLeft / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

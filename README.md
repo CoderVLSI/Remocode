@@ -6,7 +6,7 @@ An AI agent app for your phone, in the spirit of Google Antigravity's mobile app
 - **Bring your own key**: Google Gemini, Anthropic Claude, OpenAI, OpenRouter, or any OpenAI-compatible server (Ollama, LM Studio, vLLM, Groq…).
 - **Gemini Live voice**: real two-way conversation. Talk naturally, interrupt any time, and the assistant can call tools while it speaks, including starting coding tasks on your own computer (after you approve each one on screen).
 - **Classic voice**: on-device speech recognition with spoken replies, for any model.
-- **Email auth**: passwordless one-time code (or password) through Supabase.
+- **Accounts on Convex**: email + password, with optional emailed one-time codes (Convex Auth). You own the backend; it is plain TypeScript in `convex/`.
 - **Projects with resources**: add a **Google Drive** folder or files, **upload** text and code files from your phone, or attach a **GitHub** repo. The model can browse attached folders and repos (read-only, and only inside what you attached) and sees pinned files as context.
 - **Connectors**: read-only Google Calendar, Drive, Docs and Sheets as model tools.
 - **Remote Control**: send a task from your phone to an agent on your computer and watch its output live.
@@ -17,7 +17,7 @@ Built with Expo SDK 58 (React Native 0.88, expo-router, TypeScript).
 
 Build it yourself (see below), copy `remocode-arm64-release.apk` to your phone, and open it. You may need to allow "install unknown apps" for your file manager. The APK is arm64 (every modern phone) and signed with a debug key, which is fine for personal use but not for the Play Store.
 
-On first launch, enter your **Supabase project URL and anon key** on the sign-in screen (Project Settings → API). No rebuild is needed. The app refuses service-role and secret keys on purpose.
+On first launch, paste your **Convex deployment URL** (ends in `.convex.cloud`) on the sign-in screen. No rebuild is needed. The app refuses service-role and secret keys on purpose.
 
 ## Quick start
 
@@ -25,7 +25,7 @@ On first launch, enter your **Supabase project URL and anon key** on the sign-in
 
 ```bash
 npm install
-cp .env.example .env        # fill in your Supabase URL + anon key
+cp .env.example .env        # optional: bake in your Convex URL (otherwise the app asks)
 npx expo run:android        # or: npx expo run:ios (macOS)   |  eas build --profile development
 npm start                   # dev server for the dev client
 ```
@@ -45,15 +45,22 @@ The script runs `expo prebuild`, points Gradle at your SDK and JDK 17, and build
 
 Or in the cloud: `npx eas-cli build --platform android --profile preview` (needs an Expo account).
 
-### Supabase setup (one time)
+### Backend setup (Convex, one time)
 
-1. Create a project at supabase.com. Copy the **URL** and **anon key** into `.env` for development, or simply type them into the app's sign-in screen (needed for a prebuilt APK).
-2. **Email codes.** Authentication → Emails → edit the **Magic Link** *and* **Confirm signup** templates so the email contains the code, for example:
-   `Your Remocode code is {{ .Token }}`
-   Without `{{ .Token }}` Supabase only sends a link, and the app's code screen has nothing to enter.
-   The code length is under Authentication → Providers → Email; if you change it from 6, set `EXPO_PUBLIC_OTP_LENGTH` to match.
-3. Run `supabase/migrations/0001_remote_control.sql` in the SQL editor (needed only for Remote Control).
-4. Supabase's built-in email sender is rate limited; configure custom SMTP before real users.
+The backend is the `convex/` folder: accounts, paired computers, and Remote Control tasks. You deploy it to your own free Convex project.
+
+```bash
+npm install
+npx convex dev              # log in, create a project, push the functions; prints your .convex.cloud URL. Leave it running, or stop it after the first push.
+npm run convex:setup        # creates the auth signing keys on your deployment (run once)
+npm run selftest -- https://YOUR-DEPLOYMENT.convex.cloud   # optional: checks sign-in, pairing and a task end to end
+```
+
+Then paste the URL into the app (or put it in `.env` as `EXPO_PUBLIC_CONVEX_URL`). For production, deploy with `npx convex deploy` and run `npm run convex:setup -- --prod`.
+
+- **Passwords work immediately.** Sign up and sign in with email + password need nothing else.
+- **Emailed codes (optional).** Convex has no built-in email sender. Create a free [Resend](https://resend.com) key and run `npx convex env set AUTH_RESEND_KEY re_xxx`. Then new accounts must confirm their email with a 6-digit code, and the "Email code" tab works. Resend's shared sender only delivers to your own Resend account address until you verify a domain and set `npx convex env set AUTH_EMAIL_FROM "Remo Code <auth@yourdomain.com>"`.
+- Production Convex deployments hide server error text, so the app words sign-in failures from context ("wrong email or password") instead of showing raw messages.
 
 ## Models
 
@@ -105,14 +112,16 @@ Pinned text shares a context budget (about 24k characters); anything beyond it i
 
 ## Remote Control
 
-The phone writes tasks to Supabase (row-level security: your account only); a small companion on your computer picks them up, runs your agent CLI, and streams output back.
+The phone and a small companion on your computer talk through your Convex backend. You add a computer with a one-time code, so there is no password or email code to type in a terminal.
 
 ```bash
 cd companion
-npm install
-node index.mjs login   # same email as the app; enter the emailed code
-node index.mjs run     # keep this running; the computer appears in the app
+npm install                 # once
+node index.mjs pair         # asks for your Convex URL and the code from the app
+node index.mjs run          # keep this running; the computer shows as online in the app
 ```
+
+In the app: **Remote Control → Pair a computer** shows an 8-character code (valid 10 minutes, one use). The companion keeps a live connection, so a task you send starts immediately and a cancel from your phone stops the process immediately, with no polling. `node index.mjs status` checks the pairing and `node index.mjs logout` removes the computer.
 
 Configuration (environment or `.env`):
 
@@ -124,22 +133,23 @@ Configuration (environment or `.env`):
 | `REMOCODE_TIMEOUT_MIN` | `30` | Kill a task after this long |
 | `REMOCODE_DEVICE_NAME` | hostname | Name shown in the app |
 
-**Security model.** Anyone who can sign in to your Remocode account can run tasks on your computer, so protect that account. The companion never uses a shell (the prompt is a single argv element), neutralises prompts that start with `-`, runs one task at a time, enforces a timeout and output cap, and honours cancel from the phone. What the agent itself may do (edit files, run commands) is governed by that agent's own permission settings: configure them before exposing a machine.
+**Security model.** Anyone who can sign in to your Remo Code account can run tasks on your computer, so protect that account. Pairing codes are one-use, expire in 10 minutes, and wrong guesses are throttled. The companion's device token is stored only as a hash on the backend and in a private file (`~/.remocode/device.json`) on your computer; removing the computer in the app, or `logout`, makes it stop working at once. The companion never uses a shell (the prompt is a single argv element), neutralises prompts that start with `-`, runs one task at a time, enforces a timeout and output cap, and honours cancel from the phone. What the agent itself may do (edit files, run commands) is governed by that agent's own permission settings: configure them before exposing a machine.
 
 ## Development
 
 ```bash
 npm test                 # unit tests (Jest)
 npm run test:companion   # companion tests (node:test)
+npm run test:convex      # backend tests (convex-test, Vitest)
 npm run typecheck        # tsc --noEmit
 npx eslint src           # lint
 ```
 
-Layout: `src/app` screens (expo-router) · `src/lib/llm` providers, agent loop, local models · `src/lib/connectors` GitHub/Google · `src/lib/remote` · `src/lib/voice` · `src/store` zustand stores · `supabase/` SQL · `companion/` desktop daemon.
+Layout: `src/app` screens (expo-router) · `src/lib/llm` providers, agent loop, local models · `src/lib/connectors` GitHub/Google · `src/lib/remote` · `src/lib/voice` · `src/store` zustand stores · `convex/` backend (schema, auth, functions) · `convex-tests/` backend tests · `companion/` desktop daemon.
 
 ## Known limitations (v1)
 
-- Conversations are stored on-device (AsyncStorage); only Remote Control data syncs through Supabase.
+- Conversations are stored on-device (AsyncStorage); only Remote Control data lives in Convex. (Syncing chats across devices through Convex is a natural next step.)
 - Connector tools are read-only; nothing writes to GitHub or Google.
 - Classic voice uses the OS speech recognizer and text-to-speech. Gemini Live is the full two-way option.
 - Gemini Live and the on-device models are untested on hardware (see below). The Live protocol, tool round trips, reconnection and audio resampling are unit-tested against a fake server, but real-world latency and echo handling need a device pass.

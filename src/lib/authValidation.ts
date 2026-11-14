@@ -21,35 +21,55 @@ export function normalizeCode(input: string): string {
   return input.replace(/\D/g, '').slice(0, 10);
 }
 
-/** Supabase email OTPs are 6 digits by default and configurable up to 10. */
+/** Emailed sign-in codes are 6 digits (see convex/auth.ts). */
 export function isCodeComplete(code: string, length = 6): boolean {
   return code.length >= length;
 }
 
-/** Turns Supabase auth errors into short, actionable text. */
-export function friendlyAuthError(err: { message?: string; status?: number; code?: string } | null | undefined): string {
-  if (!err) return 'Something went wrong. Please try again.';
-  const msg = (err.message ?? '').toLowerCase();
-  const code = err.code ?? '';
-  if (code === 'over_email_send_rate_limit' || msg.includes('rate limit') || err.status === 429) {
+export type AuthStep = 'signIn' | 'signUp' | 'sendCode' | 'verifyCode';
+
+/**
+ * Turns Convex Auth errors into short, actionable text. Production deployments redact server
+ * errors to a generic "Server Error", so when the text carries no detail we fall back to what
+ * is most likely for the step the user was on.
+ */
+export function friendlyAuthError(err: unknown, step: AuthStep): string {
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  const msg = raw.toLowerCase();
+
+  if (/network|failed to fetch|websocket|timed? ?out|offline/.test(msg)) {
+    return 'No connection. Check your network and try again.';
+  }
+  if (msg.includes('too many') || msg.includes('rate limit') || msg.includes('ratelimit')) {
     return 'Too many attempts. Wait a minute and try again.';
   }
-  if (code === 'otp_expired' || msg.includes('expired')) return 'That code has expired. Request a new one.';
-  if (msg.includes('invalid') && (msg.includes('token') || msg.includes('otp') || msg.includes('code'))) {
-    return 'That code is not right. Check it and try again.';
+  if (msg.includes('already exists')) return 'An account with this email already exists. Sign in instead.';
+  if (msg.includes('invalid password')) return 'That password is too weak. Use at least 8 characters.';
+  if (msg.includes('could not verify code') || msg.includes('invalid code')) {
+    return 'That code is not right or has expired. Check it or request a new one.';
   }
-  if (code === 'invalid_credentials' || msg.includes('invalid login credentials')) {
+  if (msg.includes('invalid credentials') || msg.includes('invalidaccountid') || msg.includes('invalidsecret')) {
     return 'Wrong email or password.';
   }
-  if (code === 'email_not_confirmed' || msg.includes('not confirmed')) {
-    return 'Confirm your email first. We can send you a code.';
+  if (msg.includes('not set up on this backend') || msg.includes('resend')) {
+    return 'Email codes are not set up on this backend yet. Sign in with your password.';
   }
-  if (code === 'user_already_exists' || msg.includes('already registered')) {
-    return 'An account with this email already exists. Sign in instead.';
+  if (msg.includes('provider') && (msg.includes('not configured') || msg.includes('not found') || msg.includes('resend-otp'))) {
+    return 'Email codes are not set up on this backend yet. Sign in with your password.';
   }
-  if (code === 'weak_password' || msg.includes('password should')) {
-    return 'That password is too weak. Use a longer one.';
+
+  // Redacted production error (or nothing useful): describe the likely cause for this step.
+  if (!raw || msg.includes('server error')) {
+    switch (step) {
+      case 'signIn':
+        return 'Wrong email or password, or no account exists for this email yet.';
+      case 'signUp':
+        return 'Could not create the account. It may already exist, or the password is too short (use 8+ characters).';
+      case 'sendCode':
+        return 'Could not send the code. Email codes may not be set up on this backend; use your password instead.';
+      case 'verifyCode':
+        return 'That code is not right or has expired. Check it or request a new one.';
+    }
   }
-  if (msg.includes('network') || msg.includes('fetch')) return 'No connection. Check your network and try again.';
-  return err.message || 'Something went wrong. Please try again.';
+  return raw.replace(/^\[CONVEX [^\]]*\]\s*(\[Request ID: [^\]]*\]\s*)?/i, '').slice(0, 200) || 'Something went wrong. Please try again.';
 }

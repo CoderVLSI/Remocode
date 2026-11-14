@@ -1,23 +1,18 @@
-import { isFinal, isOnline, lastEventId, mergeEvents, ONLINE_WINDOW_MS, statusLabel, toSegments } from '../model';
+import { formatCountdown, isFinal, isOnline, ONLINE_WINDOW_MS, statusLabel, toSegments } from '../model';
 import type { RemoteEvent, TaskStatus } from '../model';
 
-const ev = (id: number, kind: RemoteEvent['kind'], data: string): RemoteEvent => ({
-  id,
-  task_id: 't',
-  kind,
-  data,
-  created_at: '2026-01-01T00:00:00Z',
-});
+const ev = (kind: RemoteEvent['kind'], data: string) => ({ kind, data });
 
 describe('isOnline', () => {
   const now = Date.parse('2026-11-14T12:00:00Z');
   it('is online within the heartbeat window and offline after it', () => {
-    expect(isOnline({ last_seen_at: new Date(now - 10_000).toISOString() }, now)).toBe(true);
-    expect(isOnline({ last_seen_at: new Date(now - ONLINE_WINDOW_MS).toISOString() }, now)).toBe(true);
-    expect(isOnline({ last_seen_at: new Date(now - ONLINE_WINDOW_MS - 1).toISOString() }, now)).toBe(false);
+    expect(isOnline({ lastSeenAt: now - 10_000 }, now)).toBe(true);
+    expect(isOnline({ lastSeenAt: now - ONLINE_WINDOW_MS }, now)).toBe(true);
+    expect(isOnline({ lastSeenAt: now - ONLINE_WINDOW_MS - 1 }, now)).toBe(false);
   });
-  it('treats an unparseable timestamp as offline', () => {
-    expect(isOnline({ last_seen_at: 'garbage' }, now)).toBe(false);
+  it('treats a missing or non-numeric timestamp as offline', () => {
+    expect(isOnline({ lastSeenAt: NaN }, now)).toBe(false);
+    expect(isOnline({ lastSeenAt: undefined as unknown as number }, now)).toBe(false);
   });
 });
 
@@ -34,33 +29,29 @@ describe('task status', () => {
   });
 });
 
-describe('mergeEvents', () => {
-  it('dedupes realtime/polling overlap and orders by id', () => {
-    const a = [ev(1, 'stdout', 'a'), ev(2, 'stdout', 'b')];
-    const merged = mergeEvents(a, [ev(3, 'stdout', 'c'), ev(2, 'stdout', 'b'), ev(1, 'stdout', 'a')]);
-    expect(merged.map((e) => e.id)).toEqual([1, 2, 3]);
-  });
-  it('handles out-of-order arrival', () => {
-    expect(mergeEvents([ev(5, 'stdout', 'e')], [ev(3, 'stdout', 'c')]).map((e) => e.id)).toEqual([3, 5]);
-  });
-  it('returns the same array when nothing is added (no needless re-render)', () => {
-    const a = [ev(1, 'stdout', 'a')];
-    expect(mergeEvents(a, [])).toBe(a);
-  });
-  it('lastEventId is 0 for empty', () => {
-    expect(lastEventId([])).toBe(0);
-    expect(lastEventId([ev(1, 'stdout', ''), ev(9, 'stdout', '')])).toBe(9);
-  });
-});
-
 describe('toSegments', () => {
   it('joins consecutive same-kind output and keeps info separate', () => {
-    const out = toSegments([ev(1, 'stdout', 'he'), ev(2, 'stdout', 'llo'), ev(3, 'stderr', 'warn'), ev(4, 'info', ' Cancelled '), ev(5, 'stdout', 'x')]);
-    expect(out).toEqual([
+    expect(toSegments([ev('stdout', 'he'), ev('stdout', 'llo'), ev('stderr', 'warn'), ev('info', ' Cancelled '), ev('stdout', 'x')])).toEqual([
       { kind: 'stdout', text: 'hello' },
       { kind: 'stderr', text: 'warn' },
       { kind: 'info', text: '\n# Cancelled\n' },
       { kind: 'stdout', text: 'x' },
     ]);
+  });
+  it('is empty for no output', () => {
+    expect(toSegments([])).toEqual([]);
+  });
+});
+
+describe('formatCountdown', () => {
+  it.each([
+    [600_000, '10:00'],
+    [581_000, '9:41'],
+    [61_000, '1:01'],
+    [999, '0:01'],
+    [0, '0:00'],
+    [-5000, '0:00'],
+  ])('%d ms -> %s', (ms, expected) => {
+    expect(formatCountdown(ms)).toBe(expected);
   });
 });

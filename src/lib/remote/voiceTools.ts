@@ -6,9 +6,10 @@ import type { Device, RemoteEvent, RemoteTask } from './model';
 /** The slice of the Remote Control API these tools need (injectable for tests). */
 export interface RemoteApi {
   listDevices(): Promise<Device[]>;
-  createTask(deviceId: string, prompt: string): Promise<RemoteTask>;
+  /** Returns the new task's id. */
+  createTask(deviceId: string, prompt: string): Promise<string>;
   getTask(id: string): Promise<RemoteTask | null>;
-  listEvents(taskId: string, afterId?: number): Promise<RemoteEvent[]>;
+  listEvents(taskId: string): Promise<RemoteEvent[]>;
   cancelTask(id: string): Promise<void>;
   sleep(ms: number): Promise<void>;
   now(): number;
@@ -97,8 +98,8 @@ export function createRemoteTools(api: RemoteApi): LiveTool[] {
         if (task.length > MAX_PROMPT_CHARS) throw new Error(`The task is too long (${task.length} characters; limit ${MAX_PROMPT_CHARS}).`);
         const pick = pickDevice(await api.listDevices(), typeof args.computer === 'string' ? args.computer : undefined, api.now());
         if ('error' in pick) throw new Error(pick.error);
-        const created = await api.createTask(pick.device.id, task);
-        return `Started task ${created.id} on ${pick.device.name}. Use check_task with this id to follow progress.`;
+        const taskId = await api.createTask(pick.device._id, task);
+        return `Started task ${taskId} on ${pick.device.name}. Use check_task with this id to follow progress.`;
       },
     },
     {
@@ -118,7 +119,7 @@ export function createRemoteTools(api: RemoteApi): LiveTool[] {
       },
       async execute(args, { signal }) {
         const id = typeof args.task_id === 'string' ? args.task_id : '';
-        if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('That is not a valid task id.');
+        if (!/^[a-z0-9]{20,40}$/i.test(id)) throw new Error('That is not a valid task id.');
         const wait = Math.min(Math.max(Number(args.wait_seconds ?? 10) || 0, 0), MAX_WAIT_SECONDS) * 1000;
         const deadline = api.now() + wait;
         let task = await api.getTask(id);
@@ -127,16 +128,8 @@ export function createRemoteTools(api: RemoteApi): LiveTool[] {
           await api.sleep(1500);
           task = (await api.getTask(id)) ?? task;
         }
-        const events: RemoteEvent[] = [];
-        let after = 0;
-        for (let page = 0; page < 20; page++) {
-          const batch = await api.listEvents(id, after);
-          if (batch.length === 0) break;
-          events.push(...batch);
-          after = batch[batch.length - 1].id;
-        }
-        const output = tail(events);
-        const head = `Status: ${statusLabel(task.status)}${task.exit_code !== null ? ` (exit code ${task.exit_code})` : ''}.`;
+        const output = tail(await api.listEvents(id));
+        const head = `Status: ${statusLabel(task.status)}${task.exitCode !== null ? ` (exit code ${task.exitCode})` : ''}.`;
         return output ? `${head}\nLatest output:\n${output}` : `${head}\nNo output yet.`;
       },
     },
@@ -148,7 +141,7 @@ export function createRemoteTools(api: RemoteApi): LiveTool[] {
       },
       async execute(args) {
         const id = typeof args.task_id === 'string' ? args.task_id : '';
-        if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('That is not a valid task id.');
+        if (!/^[a-z0-9]{20,40}$/i.test(id)) throw new Error('That is not a valid task id.');
         await api.cancelTask(id);
         return 'Cancelled.';
       },

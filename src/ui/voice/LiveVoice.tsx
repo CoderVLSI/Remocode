@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { useConvex } from 'convex/react';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, View } from 'react-native';
@@ -52,6 +53,7 @@ export function LiveVoice({ initialConversationId, onSwitchEngine }: { initialCo
   const insets = useSafeAreaInsets();
   const voice = useSettings((s) => s.voice);
   const liveModels = useSettings((s) => s.liveModels);
+  const convex = useConvex();
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [speaking, setSpeaking] = useState(false);
@@ -155,7 +157,7 @@ export function LiveVoice({ initialConversationId, onSwitchEngine }: { initialCo
 
       const conv = convId.current ? useChat.getState().conversations.find((c) => c.id === convId.current) : undefined;
       const project = conv ? (useChat.getState().projects.find((p) => p.id === conv.projectId) ?? null) : null;
-      const tools: LiveTool[] = [...(await buildTools(project, true)), ...createRemoteTools(liveRemoteApi)];
+      const tools: LiveTool[] = [...(await buildTools(project, true)), ...createRemoteTools(liveRemoteApi(convex))];
       const system = `${buildSystemPrompt(useSettings.getState().systemPrompt || DEFAULT_SYSTEM_PROMPT, project)}\n\n${LIVE_STYLE}`;
 
       const live = new LiveAudio();
@@ -213,7 +215,7 @@ export function LiveVoice({ initialConversationId, onSwitchEngine }: { initialCo
         setPhase('error');
       }
     }
-  }, [liveModels, voice.liveModel, voice.liveVoice, commitTurn, requestApproval]);
+  }, [convex, liveModels, voice.liveModel, voice.liveVoice, commitTurn, requestApproval]);
 
   useEffect(() => {
     alive.current = true;

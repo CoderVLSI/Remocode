@@ -81,3 +81,26 @@ test('parseDotenv reads quoted and plain values and ignores comments', () => {
   const env = parseDotenv('# c\nA=1\nB="two words"\nC=\'x\'\n  D = 4  \nbad line');
   assert.deepEqual(env, { A: '1', B: 'two words', C: 'x', D: '4' });
 });
+
+import { normalizeConvexUrl, Signal } from '../src/lib.mjs';
+
+test('normalizeConvexUrl accepts deployment URLs and dashboard links, and explains mistakes', () => {
+  assert.equal(normalizeConvexUrl(' https://wonderful-caiman-362.convex.cloud/ '), 'https://wonderful-caiman-362.convex.cloud');
+  assert.equal(normalizeConvexUrl('wonderful-caiman-362.convex.cloud'), 'https://wonderful-caiman-362.convex.cloud');
+  assert.equal(normalizeConvexUrl('https://dashboard.convex.dev/d/Wonderful-Caiman-362/data'), 'https://wonderful-caiman-362.convex.cloud');
+  assert.throws(() => normalizeConvexUrl('https://x-y-1.convex.site'), /\.convex\.cloud/);
+  assert.throws(() => normalizeConvexUrl('http://example.com'), /https/);
+  assert.throws(() => normalizeConvexUrl(''), /Enter your Convex/);
+  assert.equal(normalizeConvexUrl('http://127.0.0.1:3210'), 'http://127.0.0.1:3210');
+});
+
+test('Signal wakes a waiter, remembers a notification sent before waiting, and times out', async () => {
+  const s = new Signal();
+  const waiting = s.wait(5_000);
+  s.notify();
+  assert.equal(await waiting, true);
+
+  s.notify(); // nobody is waiting yet
+  assert.equal(await s.wait(5_000), true); // still delivered
+  assert.equal(await s.wait(10), false); // nothing pending: times out
+});
